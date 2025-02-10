@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/bosun-ai/async-anthropic/compare/v0.1.0...v0.2.0) - 2025-02-10
+
+### Added
+
+- Ensure all message content is accessible
+- Add convenience method to access first matching text content in message
+- Add convenience str to message conversion and partialeq
+
+### Other
+
+- release v0.1.0 (#2)
+
 ## [0.1.0](https://github.com/bosun-ai/async-anthropic/releases/tag/v0.1.0) - 2025-02-09
 
 ### Added
