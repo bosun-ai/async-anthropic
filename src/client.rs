@@ -1,8 +1,9 @@
+use backoff::{Error as BackoffError, ExponentialBackoff, ExponentialBackoffBuilder};
 use derive_builder::Builder;
 use reqwest::StatusCode;
 use secrecy::ExposeSecret;
 use serde::{de::DeserializeOwned, Serialize};
-use backoff::{ExponentialBackoff, future::retry, Error as BackoffError};
+use std::time::Duration;
 
 use crate::{errors::AnthropicError, messages::Messages};
 
@@ -45,19 +46,27 @@ pub struct Client {
     version: String,
     #[builder(default)]
     beta: Option<String>,
-    #[builder(default = "Some(ExponentialBackoff::default())")]
-    backoff: Option<ExponentialBackoff>,
+    #[builder(default)]
+    backoff: ExponentialBackoff,
 }
 
 impl Default for Client {
     fn default() -> Self {
+        // Load backoff settings from configuration
+        let backoff = ExponentialBackoffBuilder::default()
+            .with_initial_interval(Duration::from_secs(15))
+            .with_multiplier(2.0)
+            .with_randomization_factor(0.05)
+            .with_max_elapsed_time(Some(Duration::from_secs(120)))
+            .build();
+
         Self {
             http_client: reqwest::Client::new(),
             api_key: default_api_key(),
             version: "2023-06-01".to_string(),
             beta: None,
             base_url: BASE_URL.to_string(),
-            backoff: Some(ExponentialBackoff::default()),
+            backoff,
         }
     }
 }
@@ -90,7 +99,7 @@ impl Client {
 
     /// Set a custom backoff strategy
     pub fn with_backoff(mut self, backoff: ExponentialBackoff) -> Self {
-        self.backoff = Some(backoff);
+        self.backoff = backoff;
         self
     }
 
@@ -107,7 +116,7 @@ impl Client {
         I: Serialize,
         O: DeserializeOwned,
     {
-        let op = || async {
+        backoff::future::retry(self.backoff.clone(), || async {
             let mut request = self
                 .http_client
                 .post(format!(
@@ -124,29 +133,58 @@ impl Client {
                 request = request.header("anthropic-beta", beta_value);
             }
 
-            let response = request.send().await.map_err(AnthropicError::NetworkError)?;
+            let response = request
+                .send()
+                .await
+                .map_err(AnthropicError::NetworkError)
+                .map_err(backoff::Error::Permanent)?;
+            let status = response.status();
 
-            match response.status() {
+            match status {
                 StatusCode::OK => {
-                    let response = response.json::<O>().await.map_err(AnthropicError::NetworkError)?;
+                    let response = response
+                        .json::<O>()
+                        .await
+                        .map_err(AnthropicError::NetworkError)
+                        .map_err(backoff::Error::Permanent)?;
                     Ok(response)
                 }
                 StatusCode::BAD_REQUEST => {
-                    let text = response.text().await.map_err(AnthropicError::NetworkError)?;
+                    let text = response
+                        .text()
+                        .await
+                        .map_err(AnthropicError::NetworkError)
+                        .map_err(backoff::Error::Permanent)?;
                     Err(BackoffError::Permanent(AnthropicError::BadRequest(text)))
                 }
-                StatusCode::UNAUTHORIZED => Err(BackoffError::Permanent(AnthropicError::Unauthorized)),
+                StatusCode::UNAUTHORIZED => {
+                    Err(BackoffError::Permanent(AnthropicError::Unauthorized))
+                }
+                StatusCode::TOO_MANY_REQUESTS => {
+                    // 429 error
+                    let text = response
+                        .text()
+                        .await
+                        .map_err(AnthropicError::NetworkError)
+                        .map_err(backoff::Error::Permanent)?;
+
+                    // Rate limited retry...
+                    tracing::warn!("Rate limited: {}", text);
+                    Err(backoff::Error::Transient {
+                        err: AnthropicError::ApiError(text),
+                        retry_after: None,
+                    })
+                }
                 _ => {
-                    let text = response.text().await.map_err(AnthropicError::NetworkError)?;
+                    let text = response
+                        .text()
+                        .await
+                        .map_err(AnthropicError::NetworkError)
+                        .map_err(backoff::Error::Permanent)?;
                     Err(BackoffError::Permanent(AnthropicError::Unknown(text)))
                 }
             }
-        };
-
-        if let Some(ref backoff) = self.backoff {
-            retry(backoff.clone(), op).await.map_err(AnthropicError::from)
-        } else {
-            op().await.map_err(AnthropicError::from)
-        }
+        })
+        .await
     }
 }

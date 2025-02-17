@@ -14,6 +14,9 @@ pub enum AnthropicError {
     #[error("malformed request: {0}")]
     BadRequest(String),
 
+    #[error("api error: {0}")]
+    ApiError(String),
+
     #[error("unauthorized; check your API key")]
     Unauthorized,
 
