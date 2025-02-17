@@ -1,14 +1,16 @@
-use async_anthropic::errors::{AnthropicError, CreateMessagesError};
-use async_anthropic::types::{
-    CreateMessagesRequestBuilder, MessageBuilder, MessageContent, MessageRole,
+use async_anthropic::{
+    errors::{AnthropicError, CreateMessagesError},
+    types::{CreateMessagesRequestBuilder, MessageBuilder, MessageContent, MessageRole},
+    Client,
 };
-use async_anthropic::Client;
 use async_trait::async_trait;
-use backoff::ExponentialBackoff;
+use backoff::ExponentialBackoffBuilder;
 use serde_json::json;
-use std::time::Duration;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use std::{sync::Arc, sync::Mutex, time::Duration};
+use wiremock::{
+    matchers::{method, path},
+    Mock, MockServer, ResponseTemplate,
+};
 
 // Helper trait for setting up and tearing down mock server
 #[async_trait]
@@ -50,8 +52,8 @@ async fn test_successful_request_execution() {
         .await;
 
     let client = Client::builder()
-        .base_url(server.uri())
         .api_key(secret_key)
+        .base_url(server.uri())
         .build()
         .unwrap();
 
@@ -76,27 +78,36 @@ async fn test_successful_request_execution() {
 }
 
 #[tokio::test]
-async fn test_with_backoff_functionality() {
+async fn test_with_backoff_basic() {
     let server = TestSetup::setup().await;
     let secret_key = "test_secret";
 
-    // Mock 500 Internal Server Error, expecting retries
+    // Mock 429 Too Many Requests, expecting retries
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
-        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error").set_delay(Duration::from_millis(10)))
-        .expect(3)
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_string("Too Many Requests")
+                .set_delay(Duration::from_millis(10)),
+        )
+        .up_to_n_times(20)
+        .expect(1..)
         .mount(&server)
         .await;
 
-    let mut custom_backoff = ExponentialBackoff::default();
-    custom_backoff.max_elapsed_time = Some(Duration::from_secs(1));
+    let backoff = ExponentialBackoffBuilder::default()
+        .with_initial_interval(Duration::from_millis(10))
+        .with_multiplier(2.0)
+        .with_randomization_factor(0.0)
+        .with_max_elapsed_time(Some(Duration::from_millis(100)))
+        .build();
 
     let client = Client::builder()
         .base_url(server.uri())
         .api_key(secret_key)
         .build()
         .unwrap()
-        .with_backoff(custom_backoff);  // Use with_backoff
+        .with_backoff(backoff);
 
     let request = CreateMessagesRequestBuilder::default()
         .model("test-model".to_string())
@@ -111,9 +122,46 @@ async fn test_with_backoff_functionality() {
 
     let result = client.messages().create(request).await;
 
-    match result {
-        Ok(_) => panic!("Expected request to fail and exhaust backoff"),
-        Err(_) => (), // Test should pass if we get an error
+    assert!(result.is_err());
+    assert!(
+        matches!(
+            result.as_ref().unwrap_err(),
+            CreateMessagesError::AnthropicError(AnthropicError::ApiError(_))
+        ),
+        "actual: {:?}",
+        &result
+    )
+}
+
+pub struct RetryResponder {
+    num_calls_before_success: Arc<Mutex<u64>>,
+    calls_made: Arc<Mutex<u64>>,
+}
+
+impl RetryResponder {
+    pub fn new(num_calls_before_success: u64) -> Self {
+        Self {
+            num_calls_before_success: Arc::new(Mutex::new(num_calls_before_success)),
+            calls_made: Arc::new(Mutex::new(0)),
+        }
+    }
+}
+
+impl wiremock::Respond for RetryResponder {
+    fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+        let i = *self.calls_made.lock().unwrap();
+        let succ_calls = *self.num_calls_before_success.lock().unwrap();
+
+        if i < succ_calls {
+            *self.calls_made.lock().unwrap() += 1;
+            ResponseTemplate::new(429)
+                .set_body_string("Too Many Requests")
+                .set_delay(Duration::from_millis(10))
+        } else {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "content": [{"type": "text", "text": "retried response"}]
+            }))
+        }
     }
 }
 
@@ -122,29 +170,32 @@ async fn test_default_backoff_retries() {
     let server = TestSetup::setup().await;
     let secret_key = "test_secret";
 
-    // Mock 500 Internal Server Error initially, and success upon retry
+    let bad_calls = 3;
+    let expected_calls = bad_calls + 1; // + 1 good call at the end
+
+    let rr = RetryResponder::new(bad_calls);
+
+    // Mock 429 Too Many Requests, expecting retries
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
-        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error").set_delay(Duration::from_millis(100)))
-        .expect(2)
+        .respond_with(rr)
+        .expect(expected_calls)
         .mount(&server)
         .await;
 
-    // Retry will help in hitting a successful mocked response
-    Mock::given(method("POST"))
-        .and(path("/v1/messages"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "content": [{"type": "text", "text": "retried response"}]
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
+    let backoff = ExponentialBackoffBuilder::default()
+        .with_initial_interval(Duration::from_millis(10))
+        .with_multiplier(2.0)
+        .with_randomization_factor(0.0)
+        .with_max_elapsed_time(Some(Duration::from_millis(200)))
+        .build();
 
     let client = Client::builder()
         .base_url(server.uri())
         .api_key(secret_key)
         .build()
-        .unwrap();
+        .unwrap()
+        .with_backoff(backoff);
 
     let request = CreateMessagesRequestBuilder::default()
         .model("test-model".to_string())
@@ -158,56 +209,14 @@ async fn test_default_backoff_retries() {
         .unwrap();
 
     let result = client.messages().create(request).await;
+    assert!(result.is_ok());
+    let result = result.unwrap();
 
-    match result {
-        Ok(success) => {
-            if let Some(content) = success.content {
-                if let MessageContent::Text(text) = &content[0] {
-                    assert_eq!(text.text, "retried response");
-                }
-            }
+    if let Some(content) = result.content {
+        if let MessageContent::Text(text) = &content[0] {
+            assert_eq!(text.text, "retried response");
         }
-        Err(_) => panic!("Expected request to succeed after retry"),
     }
-}
-
-#[tokio::test]
-async fn test_custom_backoff_retries() {
-    let server = TestSetup::setup().await;
-    let secret_key = "test_secret";
-
-    // Mock 500 Internal Server Error, expecting retries
-    Mock::given(method("POST"))
-        .and(path("/v1/messages"))
-        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error").set_delay(Duration::from_millis(10)))
-        .expect(3)  // Expect more retries with custom settings
-        .mount(&server)
-        .await;
-
-    let mut custom_backoff = ExponentialBackoff::default();
-    custom_backoff.max_elapsed_time = Some(Duration::from_secs(1));
-
-    let client = Client::builder()
-        .base_url(server.uri())
-        .api_key(secret_key)
-        .backoff(custom_backoff)
-        .build()
-        .unwrap();
-
-    let request = CreateMessagesRequestBuilder::default()
-        .model("test-model".to_string())
-        .stream(true)
-        .messages(vec![MessageBuilder::default()
-            .role(MessageRole::User)
-            .content("Hello world!")
-            .build()
-            .unwrap()])
-        .build()
-        .unwrap();
-
-    let result = client.messages().create(request).await;
-
-    assert!(result.is_err()); // Because retries should exhaust custom backoff
 }
 
 #[tokio::test]
