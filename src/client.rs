@@ -2,6 +2,7 @@ use derive_builder::Builder;
 use reqwest::StatusCode;
 use secrecy::ExposeSecret;
 use serde::{de::DeserializeOwned, Serialize};
+use backoff::{ExponentialBackoff, future::retry, Error as BackoffError};
 
 use crate::{errors::AnthropicError, messages::Messages};
 
@@ -44,16 +45,19 @@ pub struct Client {
     version: String,
     #[builder(default)]
     beta: Option<String>,
+    #[builder(default = "Some(ExponentialBackoff::default())")]
+    backoff: Option<ExponentialBackoff>,
 }
 
 impl Default for Client {
     fn default() -> Self {
         Self {
             http_client: reqwest::Client::new(),
-            api_key: default_api_key(), // Default env?
+            api_key: default_api_key(),
             version: "2023-06-01".to_string(),
             beta: None,
             base_url: BASE_URL.to_string(),
+            backoff: Some(ExponentialBackoff::default()),
         }
     }
 }
@@ -84,6 +88,12 @@ impl Client {
         ClientBuilder::default()
     }
 
+    /// Set a custom backoff strategy
+    pub fn with_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+        self.backoff = Some(backoff);
+        self
+    }
+
     /// Call the messages api
     pub fn messages(&self) -> Messages {
         Messages::new(self)
@@ -97,40 +107,46 @@ impl Client {
         I: Serialize,
         O: DeserializeOwned,
     {
-        let mut request = self
-            .http_client
-            .post(format!(
-                "{}/{}",
-                &self.base_url.trim_end_matches('/'),
-                &path.trim_start_matches('/')
-            ))
-            .header("x-api-key", self.api_key.expose_secret())
-            .header("anthropic-version", &self.version)
-            .header("content-type", "application/json")
-            .json(&request);
+        let op = || async {
+            let mut request = self
+                .http_client
+                .post(format!(
+                    "{}/{}",
+                    &self.base_url.trim_end_matches('/'),
+                    &path.trim_start_matches('/')
+                ))
+                .header("x-api-key", self.api_key.expose_secret())
+                .header("anthropic-version", &self.version)
+                .header("content-type", "application/json")
+                .json(&request);
 
-        if let Some(beta_value) = &self.beta {
-            request = request.header("anthropic-beta", beta_value);
-        }
+            if let Some(beta_value) = &self.beta {
+                request = request.header("anthropic-beta", beta_value);
+            }
 
-        // TODO: Better handling deserialization errors
-        // TODO: Handle status codes
-        let response = request.send().await?;
+            let response = request.send().await.map_err(AnthropicError::NetworkError)?;
 
-        match response.status() {
-            StatusCode::OK => {
-                let response = response.json::<O>().await?;
-                Ok(response)
+            match response.status() {
+                StatusCode::OK => {
+                    let response = response.json::<O>().await.map_err(AnthropicError::NetworkError)?;
+                    Ok(response)
+                }
+                StatusCode::BAD_REQUEST => {
+                    let text = response.text().await.map_err(AnthropicError::NetworkError)?;
+                    Err(BackoffError::Permanent(AnthropicError::BadRequest(text)))
+                }
+                StatusCode::UNAUTHORIZED => Err(BackoffError::Permanent(AnthropicError::Unauthorized)),
+                _ => {
+                    let text = response.text().await.map_err(AnthropicError::NetworkError)?;
+                    Err(BackoffError::Permanent(AnthropicError::Unknown(text)))
+                }
             }
-            StatusCode::BAD_REQUEST => {
-                let text = response.text().await?;
-                Err(AnthropicError::BadRequest(text))
-            }
-            StatusCode::UNAUTHORIZED => Err(AnthropicError::Unauthorized),
-            _ => {
-                let text = response.text().await?;
-                Err(AnthropicError::Unknown(text))
-            }
+        };
+
+        if let Some(ref backoff) = self.backoff {
+            retry(backoff.clone(), op).await.map_err(AnthropicError::from)
+        } else {
+            op().await.map_err(AnthropicError::from)
         }
     }
 }

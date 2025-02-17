@@ -19,6 +19,7 @@ serde_json = { version = "1.0", default-features = false }
 derive_builder = "0.20.2"
 tracing = "0.1.41"
 secrecy = "0.10.3"
+backoff = { version = "0.4", features = ["futures", "tokio"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

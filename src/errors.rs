@@ -19,4 +19,16 @@ pub enum AnthropicError {
 
     #[error("unknown error: {0}")]
     Unknown(String),
+
+    #[error("unexpected error occurred")]
+    UnexpectedError,
+}
+
+impl From<backoff::Error<AnthropicError>> for AnthropicError {
+    fn from(err: backoff::Error<AnthropicError>) -> Self {
+        match err {
+            backoff::Error::Permanent(err) => err,
+            backoff::Error::Transient { .. } => AnthropicError::UnexpectedError,
+        }
+    }
 }
