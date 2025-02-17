@@ -62,7 +62,7 @@ impl Default for Client {
 
         Self {
             http_client: reqwest::Client::new(),
-            api_key: default_api_key(),
+            api_key: default_api_key(), // Default env?
             version: "2023-06-01".to_string(),
             beta: None,
             base_url: BASE_URL.to_string(),
