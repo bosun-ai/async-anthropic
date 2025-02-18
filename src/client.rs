@@ -140,6 +140,9 @@ impl Client {
                 .map_err(backoff::Error::Permanent)?;
             let status = response.status();
 
+            // 529 is the status code for overloaded requests
+            let overloaded_status = StatusCode::from_u16(529).expect("529 is a valid status code");
+
             match status {
                 StatusCode::OK => {
                     let response = response
@@ -160,8 +163,8 @@ impl Client {
                 StatusCode::UNAUTHORIZED => {
                     Err(BackoffError::Permanent(AnthropicError::Unauthorized))
                 }
-                StatusCode::TOO_MANY_REQUESTS => {
-                    // 429 error
+
+                _ if status == StatusCode::TOO_MANY_REQUESTS || status == overloaded_status => {
                     let text = response
                         .text()
                         .await
