@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/bosun-ai/async-anthropic/compare/v0.3.0...v0.4.0) - 2025-04-27
+
+### Added
+
+- Add support for models api
+- Convenience helpers for accessing message content
+- Implement streaming for messages api
+
+### Other
+
+- *(deps)* Bump the minor group with 7 updates ([#8](https://github.com/bosun-ai/async-anthropic/pull/8))
+- *(ci)* Add dependabot.yml
+
 ## [0.3.0](https://github.com/bosun-ai/async-anthropic/compare/v0.2.1...v0.3.0) - 2025-02-18
 
 ### Added
