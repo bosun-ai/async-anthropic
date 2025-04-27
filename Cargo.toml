@@ -27,8 +27,8 @@ tokio = { version = "1", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-wiremock = "0.6.2"
-async-trait = "0.1.86"
+wiremock = "0.6.3"
+async-trait = "0.1.88"
 test-log = "0.2.17"
 
 [features]
