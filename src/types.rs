@@ -305,6 +305,7 @@ impl Serialize for ToolChoice {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ContentBlockDelta {
     TextDelta { text: String },
+    InputJsonDelta { partial_json: String },
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
