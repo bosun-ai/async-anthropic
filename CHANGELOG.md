@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/bosun-ai/async-anthropic/compare/v0.4.0...v0.5.0) - 2025-05-02
+
+### Added
+
+- Support streaming messages with tool use ([#10](https://github.com/bosun-ai/async-anthropic/pull/10))
+
+### Other
+
+- *(deps)* Bump reqwest from 0.12.9 to 0.12.15 in the minor group ([#9](https://github.com/bosun-ai/async-anthropic/pull/9))
+
 ## [0.4.0](https://github.com/bosun-ai/async-anthropic/compare/v0.3.0...v0.4.0) - 2025-04-27
 
 ### Added
