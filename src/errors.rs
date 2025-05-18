@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AnthropicError {
     #[error("network error: {0}")]
     NetworkError(#[from] reqwest::Error),
@@ -26,15 +27,9 @@ pub enum AnthropicError {
 
     #[error("stream failed: {0}")]
     StreamError(StreamError),
-}
 
-impl From<backoff::Error<AnthropicError>> for AnthropicError {
-    fn from(err: backoff::Error<AnthropicError>) -> Self {
-        match err {
-            backoff::Error::Permanent(err) => err,
-            backoff::Error::Transient { .. } => AnthropicError::UnexpectedError,
-        }
-    }
+    #[error("request rate limited")]
+    RateLimit,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Serialize)]

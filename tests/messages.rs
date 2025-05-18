@@ -4,7 +4,7 @@ use async_anthropic::{
     Client,
 };
 use async_trait::async_trait;
-use backoff::ExponentialBackoffBuilder;
+use backon::ExponentialBuilder;
 use serde_json::json;
 use std::{sync::Arc, sync::Mutex, time::Duration};
 use wiremock::{
@@ -95,12 +95,10 @@ async fn test_with_backoff_basic() {
         .mount(&server)
         .await;
 
-    let backoff = ExponentialBackoffBuilder::default()
-        .with_initial_interval(Duration::from_millis(10))
-        .with_multiplier(2.0)
-        .with_randomization_factor(0.0)
-        .with_max_elapsed_time(Some(Duration::from_millis(100)))
-        .build();
+    let backoff = ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(10))
+        .with_factor(2.0)
+        .with_max_delay(Duration::from_millis(100));
 
     let client = Client::builder()
         .base_url(server.uri())
@@ -124,7 +122,7 @@ async fn test_with_backoff_basic() {
 
     assert!(result.is_err());
     assert!(
-        matches!(result.as_ref().unwrap_err(), AnthropicError::ApiError(_)),
+        matches!(result.as_ref().unwrap_err(), AnthropicError::RateLimit),
         "actual: {:?}",
         &result
     )
@@ -180,12 +178,10 @@ async fn test_default_backoff_retries() {
         .mount(&server)
         .await;
 
-    let backoff = ExponentialBackoffBuilder::default()
-        .with_initial_interval(Duration::from_millis(10))
-        .with_multiplier(2.0)
-        .with_randomization_factor(0.0)
-        .with_max_elapsed_time(Some(Duration::from_millis(200)))
-        .build();
+    let backoff = ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(10))
+        .with_factor(2.0)
+        .with_max_delay(Duration::from_millis(200));
 
     let client = Client::builder()
         .base_url(server.uri())

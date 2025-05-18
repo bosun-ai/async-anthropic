@@ -1,4 +1,4 @@
-use backoff::{Error as BackoffError, ExponentialBackoff, ExponentialBackoffBuilder};
+use backon::{ExponentialBuilder, Retryable as _};
 use derive_builder::Builder;
 use reqwest::StatusCode;
 use reqwest_eventsource::{Event, EventSource, RequestBuilderExt as _};
@@ -53,18 +53,17 @@ pub struct Client {
     #[builder(default)]
     beta: Option<String>,
     #[builder(default)]
-    backoff: ExponentialBackoff,
+    backoff: ExponentialBuilder,
 }
 
 impl Default for Client {
     fn default() -> Self {
         // Load backoff settings from configuration
-        let backoff = ExponentialBackoffBuilder::default()
-            .with_initial_interval(Duration::from_secs(15))
-            .with_multiplier(2.0)
-            .with_randomization_factor(0.05)
-            .with_max_elapsed_time(Some(Duration::from_secs(120)))
-            .build();
+        let backoff = ExponentialBuilder::default()
+            .with_min_delay(Duration::from_secs(15))
+            .with_factor(2.0)
+            .with_jitter()
+            .with_max_delay(Duration::from_secs(120));
 
         Self {
             http_client: reqwest::Client::new(),
@@ -104,7 +103,7 @@ impl Client {
     }
 
     /// Set a custom backoff strategy
-    pub fn with_backoff(mut self, backoff: ExponentialBackoff) -> Self {
+    pub fn with_backoff(mut self, backoff: ExponentialBuilder) -> Self {
         self.backoff = backoff;
         self
     }
@@ -140,49 +139,23 @@ impl Client {
     where
         O: DeserializeOwned,
     {
-        backoff::future::retry(self.backoff.clone(), || async {
+        let request = || async {
             let response = self
                 .http_client
                 .get(self.format_url(path))
                 .headers(self.headers())
                 .send()
                 .await
-                .map_err(AnthropicError::NetworkError)
-                .map_err(backoff::Error::Permanent)?;
+                .map_err(AnthropicError::NetworkError)?;
 
-            let status = response.status();
+            handle_response(response).await
+        };
 
-            match status {
-                StatusCode::OK => {
-                    let response = response
-                        .json::<O>()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-                    Ok(response)
-                }
-                StatusCode::BAD_REQUEST => {
-                    let text = response
-                        .text()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-                    Err(BackoffError::Permanent(AnthropicError::BadRequest(text)))
-                }
-                StatusCode::UNAUTHORIZED => {
-                    Err(BackoffError::Permanent(AnthropicError::Unauthorized))
-                }
-                _ => {
-                    let text = response
-                        .text()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-                    Err(BackoffError::Permanent(AnthropicError::Unknown(text)))
-                }
-            }
-        })
-        .await
+        request
+            .retry(self.backoff)
+            .sleep(tokio::time::sleep)
+            .when(|e| matches!(e, AnthropicError::RateLimit))
+            .await
     }
 
     /// Make post request to the API
@@ -193,7 +166,7 @@ impl Client {
         I: Serialize,
         O: DeserializeOwned,
     {
-        backoff::future::retry(self.backoff.clone(), || async {
+        let request = || async {
             let mut request = self
                 .http_client
                 .post(self.format_url(path))
@@ -204,62 +177,16 @@ impl Client {
                 request = request.header("anthropic-beta", beta_value);
             }
 
-            let response = request
-                .send()
-                .await
-                .map_err(AnthropicError::NetworkError)
-                .map_err(backoff::Error::Permanent)?;
-            let status = response.status();
+            let response = request.send().await.map_err(AnthropicError::NetworkError)?;
 
-            // 529 is the status code for overloaded requests
-            let overloaded_status = StatusCode::from_u16(529).expect("529 is a valid status code");
+            handle_response(response).await
+        };
 
-            match status {
-                StatusCode::OK => {
-                    let response = response
-                        .json::<O>()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-                    Ok(response)
-                }
-                StatusCode::BAD_REQUEST => {
-                    let text = response
-                        .text()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-                    Err(BackoffError::Permanent(AnthropicError::BadRequest(text)))
-                }
-                StatusCode::UNAUTHORIZED => {
-                    Err(BackoffError::Permanent(AnthropicError::Unauthorized))
-                }
-
-                _ if status == StatusCode::TOO_MANY_REQUESTS || status == overloaded_status => {
-                    let text = response
-                        .text()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-
-                    // Rate limited retry...
-                    tracing::warn!("Rate limited: {}", text);
-                    Err(backoff::Error::Transient {
-                        err: AnthropicError::ApiError(text),
-                        retry_after: None,
-                    })
-                }
-                _ => {
-                    let text = response
-                        .text()
-                        .await
-                        .map_err(AnthropicError::NetworkError)
-                        .map_err(backoff::Error::Permanent)?;
-                    Err(BackoffError::Permanent(AnthropicError::Unknown(text)))
-                }
-            }
-        })
-        .await
+        request
+            .retry(self.backoff)
+            .sleep(tokio::time::sleep)
+            .when(|e| matches!(e, AnthropicError::RateLimit))
+            .await
     }
 
     pub(crate) async fn post_stream<I, O, const N: usize>(
@@ -281,6 +208,49 @@ impl Client {
             .unwrap();
 
         stream(event_source, event_types).await
+    }
+}
+
+async fn handle_response<O>(response: reqwest::Response) -> Result<O, AnthropicError>
+where
+    O: DeserializeOwned,
+{
+    let status = response.status();
+
+    // 529 is the status code for overloaded requests
+    let overloaded_status = StatusCode::from_u16(529).expect("529 is a valid status code");
+
+    match status {
+        StatusCode::OK => response
+            .json::<O>()
+            .await
+            .map_err(AnthropicError::NetworkError),
+        StatusCode::BAD_REQUEST => {
+            let text = response
+                .text()
+                .await
+                .map_err(AnthropicError::NetworkError)?;
+
+            Err(AnthropicError::BadRequest(text))
+        }
+        StatusCode::UNAUTHORIZED => Err(AnthropicError::Unauthorized),
+        _ if status == StatusCode::TOO_MANY_REQUESTS || status == overloaded_status => {
+            let text = response
+                .text()
+                .await
+                .map_err(AnthropicError::NetworkError)?;
+
+            tracing::warn!("Rate limited: {}", text);
+            Err(AnthropicError::RateLimit)
+        }
+        _ => {
+            let text = response
+                .text()
+                .await
+                .map_err(AnthropicError::NetworkError)?;
+
+            Err(AnthropicError::Unknown(text))
+        }
     }
 }
 
