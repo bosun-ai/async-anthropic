@@ -322,7 +322,8 @@ where
                         } else {
                             Err(AnthropicError::StreamError(StreamError {
                                 error_type: "unknown_event_type".to_string(),
-                                message: format!("Unknown event type: {event}"),
+                                message: Some(format!("Unknown event type: {event}")),
+                                error: None,
                             }))
                         };
                         let cancel = response.is_err();
@@ -339,7 +340,8 @@ where
                     if tx
                         .send(Err(AnthropicError::StreamError(StreamError {
                             error_type: "sse_error".to_string(),
-                            message: e.to_string(),
+                            message: Some(e.to_string()),
+                            error: None,
                         })))
                         .is_err()
                     {

@@ -41,14 +41,20 @@ impl From<backoff::Error<AnthropicError>> for AnthropicError {
 pub struct StreamError {
     #[serde(rename = "type")]
     pub error_type: String,
-    pub message: String,
+    pub message: Option<String>,
+    pub error: Option<serde_json::Value>,
 }
 
 impl std::fmt::Display for StreamError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "Error ({}): {}",
-            self.error_type, self.message
+            self.error_type,
+            self.message.clone().unwrap_or_else(|| self
+                .error
+                .as_ref()
+                .map(|v| v.to_string())
+                .unwrap_or_default())
         ))
     }
 }
