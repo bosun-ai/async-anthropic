@@ -23,6 +23,14 @@ pub enum ToolChoice {
     Tool(String),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq)]
+#[builder(setter(into))]
+pub struct ExtendedThinking {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub budget_tokens: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq, Default)]
 #[builder(setter(into, strip_option), default)]
 pub struct Message {
@@ -91,6 +99,9 @@ pub struct CreateMessagesRequest {
     pub max_tokens: i32,
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ExtendedThinking>,
+    #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Map<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
@@ -157,7 +168,7 @@ pub enum MessageContent {
     ToolUse(ToolUse),
     ToolResult(ToolResult),
     Text(Text),
-    // TODO: Implement images and documents
+    Thinking(Thinking),
 }
 
 impl MessageContent {
@@ -252,6 +263,32 @@ impl From<Text> for MessageContentList {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, Builder)]
+#[builder(setter(into, strip_option), default)]
+pub struct Thinking {
+    pub thinking: String,
+}
+
+impl<S: AsRef<str>> From<S> for Thinking {
+    fn from(s: S) -> Self {
+        Thinking {
+            thinking: s.as_ref().to_string(),
+        }
+    }
+}
+
+impl From<Thinking> for MessageContent {
+    fn from(thinking: Thinking) -> Self {
+        MessageContent::Thinking(thinking)
+    }
+}
+
+impl From<Thinking> for MessageContentList {
+    fn from(thinking: Thinking) -> Self {
+        MessageContentList(vec![thinking.into()])
+    }
+}
+
 impl<S: AsRef<str>> From<S> for MessageContent {
     fn from(s: S) -> Self {
         MessageContent::Text(Text {
@@ -289,12 +326,18 @@ impl Serialize for ToolChoice {
         S: Serializer,
     {
         match self {
-            ToolChoice::Auto => {
-                serde::Serialize::serialize(&serde_json::json!({"type": "auto"}), serializer)
-            }
-            ToolChoice::Any => {
-                serde::Serialize::serialize(&serde_json::json!({"type": "any"}), serializer)
-            }
+            ToolChoice::Auto => serde::Serialize::serialize(
+                &serde_json::json!({
+  "type": "auto"
+}),
+                serializer,
+            ),
+            ToolChoice::Any => serde::Serialize::serialize(
+                &serde_json::json!({
+  "type": "any"
+}),
+                serializer,
+            ),
             ToolChoice::Tool(name) => serde::Serialize::serialize(
                 &serde_json::json!({"type": "tool", "name": name}),
                 serializer,
@@ -306,6 +349,8 @@ impl Serialize for ToolChoice {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ContentBlockDelta {
     TextDelta { text: String },
+    ThinkingDelta { thinking: String },
+    SignatureDelta { signature: String },
     InputJsonDelta { partial_json: String },
 }
 
@@ -389,16 +434,26 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_deserialize_response() {
         let response = json!({
-        "id":"msg_01KkaCASJuaAgTWD2wqdbwC8",
-        "type":"message",
-        "role":"assistant",
-        "model":"claude-3-5-sonnet-20241022",
-        "content":[
-            {"type":"text",
-        "text":"Hi! How can I help you today?"}],
-        "stop_reason":"end_turn",
-        "stop_sequence":null,
-        "usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":12}}).to_string();
+  "id": "msg_01KkaCASJuaAgTWD2wqdbwC8",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet-20241022",
+  "content": [
+    {
+      "type": "text",
+      "text": "Hi! How can I help you today?"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 10,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 12
+  }
+})
+        .to_string();
 
         let response = serde_json::from_str::<CreateMessagesResponse>(&response).unwrap();
 
