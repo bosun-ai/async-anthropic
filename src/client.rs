@@ -311,7 +311,13 @@ where
                         .send(Err(AnthropicError::StreamError(StreamError {
                             error_type: "sse_error".to_string(),
                             message: Some(e.to_string()),
-                            error: None,
+                            error: match e {
+                                reqwest_eventsource::Error::InvalidContentType(_, response)
+                                | reqwest_eventsource::Error::InvalidStatusCode(_, response) => {
+                                    Some(response.text().await.unwrap_or_default().into())
+                                }
+                                _ => None,
+                            },
                         })))
                         .is_err()
                     {

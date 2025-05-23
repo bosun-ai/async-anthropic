@@ -42,15 +42,16 @@ pub struct StreamError {
 
 impl std::fmt::Display for StreamError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "Error ({}): {}",
+        write!(
+            f,
+            "Error ({}): {}{}",
             self.error_type,
-            self.message.clone().unwrap_or_else(|| self
-                .error
+            self.message.clone().unwrap_or_default(),
+            self.error
                 .as_ref()
-                .map(|v| v.to_string())
-                .unwrap_or_default())
-        ))
+                .map(|v| format!(" - {v}"))
+                .unwrap_or_default(),
+        )
     }
 }
 
