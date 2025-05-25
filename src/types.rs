@@ -328,14 +328,14 @@ impl Serialize for ToolChoice {
         match self {
             ToolChoice::Auto => serde::Serialize::serialize(
                 &serde_json::json!({
-  "type": "auto"
-}),
+                  "type": "auto",
+                }),
                 serializer,
             ),
             ToolChoice::Any => serde::Serialize::serialize(
                 &serde_json::json!({
-  "type": "any"
-}),
+                  "type": "any",
+                }),
                 serializer,
             ),
             ToolChoice::Tool(name) => serde::Serialize::serialize(
@@ -434,25 +434,25 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_deserialize_response() {
         let response = json!({
-  "id": "msg_01KkaCASJuaAgTWD2wqdbwC8",
-  "type": "message",
-  "role": "assistant",
-  "model": "claude-3-5-sonnet-20241022",
-  "content": [
-    {
-      "type": "text",
-      "text": "Hi! How can I help you today?"
-    }
-  ],
-  "stop_reason": "end_turn",
-  "stop_sequence": null,
-  "usage": {
-    "input_tokens": 10,
-    "cache_creation_input_tokens": 0,
-    "cache_read_input_tokens": 0,
-    "output_tokens": 12
-  }
-})
+          "id": "msg_01KkaCASJuaAgTWD2wqdbwC8",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude-3-5-sonnet-20241022",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi! How can I help you today?"
+            }
+          ],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 12
+          }
+        })
         .to_string();
 
         let response = serde_json::from_str::<CreateMessagesResponse>(&response).unwrap();
