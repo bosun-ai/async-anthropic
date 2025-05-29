@@ -326,12 +326,21 @@ impl From<Text> for MessageContentList {
 #[builder(setter(into, strip_option), default)]
 pub struct Thinking {
     pub thinking: String,
+    pub signature: Option<String>,
+}
+
+impl Thinking {
+    pub fn with_signature(mut self, signature: String) -> Self {
+        self.signature = Some(signature);
+        self
+    }
 }
 
 impl<S: AsRef<str>> From<S> for Thinking {
     fn from(s: S) -> Self {
         Thinking {
             thinking: s.as_ref().to_string(),
+            signature: None,
         }
     }
 }
