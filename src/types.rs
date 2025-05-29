@@ -18,9 +18,68 @@ pub struct Usage {
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum ToolChoice {
-    Auto,
-    Any,
-    Tool(String),
+    None,
+    Auto {
+        disable_parallel_tool_use: bool,
+    },
+    Any {
+        disable_parallel_tool_use: bool,
+    },
+    Tool {
+        name: String,
+        disable_parallel_tool_use: bool,
+    },
+}
+
+impl ToolChoice {
+    /// Instruct the model to not use any tools.
+    #[must_use]
+    pub fn none() -> Self {
+        ToolChoice::None
+    }
+
+    /// Instruct the model to use zero, one, or more tools.
+    #[must_use]
+    pub fn auto() -> Self {
+        ToolChoice::Auto {
+            disable_parallel_tool_use: false,
+        }
+    }
+
+    /// Instruct the model to use one, or more tools.
+    #[must_use]
+    pub fn any() -> Self {
+        ToolChoice::Any {
+            disable_parallel_tool_use: false,
+        }
+    }
+
+    /// Instruct the model to use the specified tool.
+    #[must_use]
+    pub fn tool(name: String) -> Self {
+        ToolChoice::Tool {
+            name,
+            disable_parallel_tool_use: false,
+        }
+    }
+
+    /// Enable or disable parallel tool use for this tool choice.
+    #[must_use]
+    pub fn with_disable_parallel_tool_use(self, disable_parallel_tool_use: bool) -> Self {
+        match self {
+            ToolChoice::None => ToolChoice::None,
+            ToolChoice::Auto { .. } => ToolChoice::Auto {
+                disable_parallel_tool_use,
+            },
+            ToolChoice::Any { .. } => ToolChoice::Any {
+                disable_parallel_tool_use,
+            },
+            ToolChoice::Tool { name, .. } => ToolChoice::Tool {
+                name,
+                disable_parallel_tool_use,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq)]
@@ -326,20 +385,39 @@ impl Serialize for ToolChoice {
         S: Serializer,
     {
         match self {
-            ToolChoice::Auto => serde::Serialize::serialize(
+            ToolChoice::None => serde::Serialize::serialize(
+                &serde_json::json!({
+                  "type": "none",
+                }),
+                serializer,
+            ),
+            ToolChoice::Auto {
+                disable_parallel_tool_use,
+            } => serde::Serialize::serialize(
                 &serde_json::json!({
                   "type": "auto",
+                  "disable_parallel_tool_use": disable_parallel_tool_use,
                 }),
                 serializer,
             ),
-            ToolChoice::Any => serde::Serialize::serialize(
+            ToolChoice::Any {
+                disable_parallel_tool_use,
+            } => serde::Serialize::serialize(
                 &serde_json::json!({
                   "type": "any",
+                  "disable_parallel_tool_use": disable_parallel_tool_use,
                 }),
                 serializer,
             ),
-            ToolChoice::Tool(name) => serde::Serialize::serialize(
-                &serde_json::json!({"type": "tool", "name": name}),
+            ToolChoice::Tool {
+                name,
+                disable_parallel_tool_use,
+            } => serde::Serialize::serialize(
+                &serde_json::json!({
+                    "type": "tool",
+                    "name": name,
+                    "disable_parallel_tool_use": disable_parallel_tool_use
+                }),
                 serializer,
             ),
         }
