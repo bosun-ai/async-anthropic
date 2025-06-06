@@ -18,9 +18,76 @@ pub struct Usage {
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum ToolChoice {
-    Auto,
-    Any,
-    Tool(String),
+    None,
+    Auto {
+        disable_parallel_tool_use: bool,
+    },
+    Any {
+        disable_parallel_tool_use: bool,
+    },
+    Tool {
+        name: String,
+        disable_parallel_tool_use: bool,
+    },
+}
+
+impl ToolChoice {
+    /// Instruct the model to not use any tools.
+    #[must_use]
+    pub fn none() -> Self {
+        ToolChoice::None
+    }
+
+    /// Instruct the model to use zero, one, or more tools.
+    #[must_use]
+    pub fn auto() -> Self {
+        ToolChoice::Auto {
+            disable_parallel_tool_use: false,
+        }
+    }
+
+    /// Instruct the model to use one, or more tools.
+    #[must_use]
+    pub fn any() -> Self {
+        ToolChoice::Any {
+            disable_parallel_tool_use: false,
+        }
+    }
+
+    /// Instruct the model to use the specified tool.
+    #[must_use]
+    pub fn tool(name: String) -> Self {
+        ToolChoice::Tool {
+            name,
+            disable_parallel_tool_use: false,
+        }
+    }
+
+    /// Enable or disable parallel tool use for this tool choice.
+    #[must_use]
+    pub fn with_disable_parallel_tool_use(self, disable_parallel_tool_use: bool) -> Self {
+        match self {
+            ToolChoice::None => ToolChoice::None,
+            ToolChoice::Auto { .. } => ToolChoice::Auto {
+                disable_parallel_tool_use,
+            },
+            ToolChoice::Any { .. } => ToolChoice::Any {
+                disable_parallel_tool_use,
+            },
+            ToolChoice::Tool { name, .. } => ToolChoice::Tool {
+                name,
+                disable_parallel_tool_use,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq)]
+#[builder(setter(into))]
+pub struct ExtendedThinking {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub budget_tokens: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq, Default)]
@@ -36,10 +103,9 @@ impl Message {
         self.content
             .0
             .iter()
-            .filter(|c| matches!(c, MessageContent::ToolUse(_)))
-            .map(|c| match c {
-                MessageContent::ToolUse(tool_use) => tool_use.clone(),
-                _ => unreachable!(),
+            .filter_map(|c| match c {
+                MessageContent::ToolUse(tool_use) => Some(tool_use.clone()),
+                _ => None,
             })
             .collect()
     }
@@ -89,6 +155,9 @@ pub struct CreateMessagesRequest {
     pub model: String,
     #[builder(default = messages::DEFAULT_MAX_TOKENS)]
     pub max_tokens: i32,
+    #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ExtendedThinking>,
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Map<String, Value>>,
@@ -157,7 +226,21 @@ pub enum MessageContent {
     ToolUse(ToolUse),
     ToolResult(ToolResult),
     Text(Text),
-    // TODO: Implement images and documents
+    Thinking(Thinking),
+
+    /// See Anthropic's docs for more information:
+    ///
+    /// > Occasionally Claude’s internal reasoning will be flagged by our safety
+    /// > systems. When this occurs, we encrypt some or all of the thinking
+    /// > block and return it to you as a redacted_thinking block.
+    /// > redacted_thinking blocks are decrypted when passed back to the API,
+    /// > allowing Claude to continue its response without losing context.
+    ///
+    /// See:
+    /// <https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#thinking-redaction>
+    RedactedThinking {
+        data: String,
+    },
 }
 
 impl MessageContent {
@@ -252,6 +335,41 @@ impl From<Text> for MessageContentList {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, Builder)]
+#[builder(setter(into, strip_option), default)]
+pub struct Thinking {
+    pub thinking: String,
+    pub signature: Option<String>,
+}
+
+impl Thinking {
+    pub fn with_signature(mut self, signature: String) -> Self {
+        self.signature = Some(signature);
+        self
+    }
+}
+
+impl<S: AsRef<str>> From<S> for Thinking {
+    fn from(s: S) -> Self {
+        Thinking {
+            thinking: s.as_ref().to_string(),
+            signature: None,
+        }
+    }
+}
+
+impl From<Thinking> for MessageContent {
+    fn from(thinking: Thinking) -> Self {
+        MessageContent::Thinking(thinking)
+    }
+}
+
+impl From<Thinking> for MessageContentList {
+    fn from(thinking: Thinking) -> Self {
+        MessageContentList(vec![thinking.into()])
+    }
+}
+
 impl<S: AsRef<str>> From<S> for MessageContent {
     fn from(s: S) -> Self {
         MessageContent::Text(Text {
@@ -289,14 +407,39 @@ impl Serialize for ToolChoice {
         S: Serializer,
     {
         match self {
-            ToolChoice::Auto => {
-                serde::Serialize::serialize(&serde_json::json!({"type": "auto"}), serializer)
-            }
-            ToolChoice::Any => {
-                serde::Serialize::serialize(&serde_json::json!({"type": "any"}), serializer)
-            }
-            ToolChoice::Tool(name) => serde::Serialize::serialize(
-                &serde_json::json!({"type": "tool", "name": name}),
+            ToolChoice::None => serde::Serialize::serialize(
+                &serde_json::json!({
+                  "type": "none",
+                }),
+                serializer,
+            ),
+            ToolChoice::Auto {
+                disable_parallel_tool_use,
+            } => serde::Serialize::serialize(
+                &serde_json::json!({
+                  "type": "auto",
+                  "disable_parallel_tool_use": disable_parallel_tool_use,
+                }),
+                serializer,
+            ),
+            ToolChoice::Any {
+                disable_parallel_tool_use,
+            } => serde::Serialize::serialize(
+                &serde_json::json!({
+                  "type": "any",
+                  "disable_parallel_tool_use": disable_parallel_tool_use,
+                }),
+                serializer,
+            ),
+            ToolChoice::Tool {
+                name,
+                disable_parallel_tool_use,
+            } => serde::Serialize::serialize(
+                &serde_json::json!({
+                    "type": "tool",
+                    "name": name,
+                    "disable_parallel_tool_use": disable_parallel_tool_use
+                }),
                 serializer,
             ),
         }
@@ -306,6 +449,8 @@ impl Serialize for ToolChoice {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ContentBlockDelta {
     TextDelta { text: String },
+    ThinkingDelta { thinking: String },
+    SignatureDelta { signature: String },
     InputJsonDelta { partial_json: String },
 }
 
@@ -389,16 +534,26 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_deserialize_response() {
         let response = json!({
-        "id":"msg_01KkaCASJuaAgTWD2wqdbwC8",
-        "type":"message",
-        "role":"assistant",
-        "model":"claude-3-5-sonnet-20241022",
-        "content":[
-            {"type":"text",
-        "text":"Hi! How can I help you today?"}],
-        "stop_reason":"end_turn",
-        "stop_sequence":null,
-        "usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":12}}).to_string();
+          "id": "msg_01KkaCASJuaAgTWD2wqdbwC8",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude-3-5-sonnet-20241022",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi! How can I help you today?"
+            }
+          ],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 12
+          }
+        })
+        .to_string();
 
         let response = serde_json::from_str::<CreateMessagesResponse>(&response).unwrap();
 
