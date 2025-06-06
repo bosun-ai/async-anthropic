@@ -103,10 +103,9 @@ impl Message {
         self.content
             .0
             .iter()
-            .filter(|c| matches!(c, MessageContent::ToolUse(_)))
-            .map(|c| match c {
-                MessageContent::ToolUse(tool_use) => tool_use.clone(),
-                _ => unreachable!(),
+            .filter_map(|c| match c {
+                MessageContent::ToolUse(tool_use) => Some(tool_use.clone()),
+                _ => None,
             })
             .collect()
     }
@@ -228,6 +227,18 @@ pub enum MessageContent {
     ToolResult(ToolResult),
     Text(Text),
     Thinking(Thinking),
+
+    /// See Anthropic's docs for more information:
+    ///
+    /// > Occasionally Claude’s internal reasoning will be flagged by our safety
+    /// > systems. When this occurs, we encrypt some or all of the thinking
+    /// > block and return it to you as a redacted_thinking block.
+    /// > redacted_thinking blocks are decrypted when passed back to the API,
+    /// > allowing Claude to continue its response without losing context.
+    ///
+    /// See:
+    /// <https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#thinking-redaction>
+    RedactedThinking(String),
 }
 
 impl MessageContent {

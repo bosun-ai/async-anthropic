@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_object()
         .unwrap()
         .to_owned()])
-        .tool_choice(ToolChoice::Auto)
+        .tool_choice(ToolChoice::auto())
         .build()
         .unwrap();
 
