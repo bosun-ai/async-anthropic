@@ -238,7 +238,9 @@ pub enum MessageContent {
     ///
     /// See:
     /// <https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#thinking-redaction>
-    RedactedThinking(String),
+    RedactedThinking {
+        data: String,
+    },
 }
 
 impl MessageContent {
