@@ -300,6 +300,18 @@ pub struct ThinkingBlock {
     pub signature: Option<String>,
 }
 
+impl From<ThinkingBlock> for MessageContent {
+    fn from(thinking: ThinkingBlock) -> Self {
+        MessageContent::Thinking(thinking)
+    }
+}
+
+impl From<ThinkingBlock> for MessageContentList {
+    fn from(thinking: ThinkingBlock) -> Self {
+        MessageContentList(vec![thinking.into()])
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RedactedThinkingBlock {
     pub data: String,
