@@ -317,6 +317,18 @@ pub struct RedactedThinkingBlock {
     pub data: String,
 }
 
+impl From<RedactedThinkingBlock> for MessageContent {
+    fn from(redacted: RedactedThinkingBlock) -> Self {
+        MessageContent::RedactedThinking(redacted)
+    }
+}
+
+impl From<RedactedThinkingBlock> for MessageContentList {
+    fn from(redacted: RedactedThinkingBlock) -> Self {
+        MessageContentList(vec![redacted.into()])
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ServerToolUse {
     pub id: String,
