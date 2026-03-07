@@ -30,6 +30,7 @@ tokio = { version = "1", features = ["full"] }
 wiremock = "0.6.3"
 async-trait = "0.1.88"
 test-log = "0.2.17"
+dotenv = "0.15.0"
 
 [features]
 # By default, use reqwest with rustls

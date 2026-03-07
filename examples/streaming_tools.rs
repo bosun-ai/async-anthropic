@@ -1,7 +1,7 @@
 // examples/basic_usage.rs
 
 use async_anthropic::{
-    types::{CreateMessagesRequestBuilder, MessageBuilder, MessageRole},
+    types::{CreateMessagesRequestBuilder, MessageBuilder, MessageRole, Tool},
     Client,
 };
 use serde_json::json;
@@ -18,23 +18,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .content("What is the weather like in San Francisco?")
             .build()
             .unwrap()])
-        .tools([json!({
-          "name": "get_weather",
-          "description": "Get the current weather in a given location",
-          "input_schema": {
-            "type": "object",
-            "properties": {
-              "location": {
-                "type": "string",
-                "description": "The city and state, e.g. San Francisco, CA"
-              }
-            },
-            "required": ["location"]
-          }
-        })
-        .as_object()
-        .unwrap()
-        .to_owned()])
+        .tools(vec![Tool::Custom {
+            name: "get_weather".into(),
+            description: Some("Get the current weather in a given location".into()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city and state, e.g. San Francisco, CA"
+                    }
+                },
+                "required": ["location"]
+            }),
+        }])
         .build()
         .unwrap();
 

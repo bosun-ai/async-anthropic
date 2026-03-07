@@ -10,10 +10,16 @@ use tokio_stream::Stream;
 
 use crate::{errors::AnthropicError, messages};
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct Usage {
+    #[serde(default)]
     pub input_tokens: Option<u32>,
+    #[serde(default)]
     pub output_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -21,6 +27,49 @@ pub enum ToolChoice {
     Auto,
     Any,
     Tool(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum Thinking {
+    Enabled { budget_tokens: u32 },
+    Adaptive,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Tool {
+    #[serde(rename = "custom")]
+    Custom {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        input_schema: Value,
+    },
+    #[serde(rename = "web_search_20260209")]
+    WebSearch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_domains: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blocked_domains: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_uses: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user_location: Option<UserLocation>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserLocation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub country: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq, Default)]
@@ -103,10 +152,9 @@ pub struct CreateMessagesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     pub tool_choice: Option<ToolChoice>,
-    // TODO: Type this
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    pub tools: Option<Vec<serde_json::Map<String, Value>>>,
+    pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     pub top_k: Option<u32>, // > 0
@@ -116,6 +164,12 @@ pub struct CreateMessagesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     pub system: Option<String>, // 0 < x < 1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub thinking: Option<Thinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -157,6 +211,10 @@ pub enum MessageContent {
     ToolUse(ToolUse),
     ToolResult(ToolResult),
     Text(Text),
+    Thinking(ThinkingBlock),
+    RedactedThinking(RedactedThinkingBlock),
+    ServerToolUse(ServerToolUse),
+    WebSearchToolResult(WebSearchToolResult),
     // TODO: Implement images and documents
 }
 
@@ -180,6 +238,14 @@ impl MessageContent {
     pub fn as_text(&self) -> Option<&Text> {
         if let MessageContent::Text(text) = self {
             Some(text)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_thinking(&self) -> Option<&ThinkingBlock> {
+        if let MessageContent::Thinking(thinking) = self {
+            Some(thinking)
         } else {
             None
         }
@@ -224,6 +290,66 @@ impl From<ToolResult> for MessageContentList {
     fn from(tool_result: ToolResult) -> Self {
         MessageContentList(vec![tool_result.into()])
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, Builder)]
+#[builder(setter(into, strip_option), default)]
+pub struct ThinkingBlock {
+    pub thinking: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl From<ThinkingBlock> for MessageContent {
+    fn from(thinking: ThinkingBlock) -> Self {
+        MessageContent::Thinking(thinking)
+    }
+}
+
+impl From<ThinkingBlock> for MessageContentList {
+    fn from(thinking: ThinkingBlock) -> Self {
+        MessageContentList(vec![thinking.into()])
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RedactedThinkingBlock {
+    pub data: String,
+}
+
+impl From<RedactedThinkingBlock> for MessageContent {
+    fn from(redacted: RedactedThinkingBlock) -> Self {
+        MessageContent::RedactedThinking(redacted)
+    }
+}
+
+impl From<RedactedThinkingBlock> for MessageContentList {
+    fn from(redacted: RedactedThinkingBlock) -> Self {
+        MessageContentList(vec![redacted.into()])
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ServerToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebSearchResult {
+    pub title: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_age: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebSearchToolResult {
+    pub tool_use_id: String,
+    pub content: Vec<WebSearchResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, Builder)]
@@ -307,6 +433,8 @@ impl Serialize for ToolChoice {
 pub enum ContentBlockDelta {
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
+    ThinkingDelta { thinking: String },
+    SignatureDelta { signature: String },
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
