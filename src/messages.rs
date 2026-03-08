@@ -12,7 +12,7 @@ pub struct Messages<'c> {
 }
 
 impl Messages<'_> {
-    pub fn new(client: &Client) -> Messages {
+    pub fn new(client: &Client) -> Messages<'_> {
         Messages { client }
     }
 

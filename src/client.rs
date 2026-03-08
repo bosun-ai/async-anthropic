@@ -110,11 +110,11 @@ impl Client {
     }
 
     /// Call the messages api
-    pub fn messages(&self) -> Messages {
+    pub fn messages(&self) -> Messages<'_> {
         Messages::new(self)
     }
 
-    pub fn models(&self) -> Models {
+    pub fn models(&self) -> Models<'_> {
         Models::new(self)
     }
 
@@ -122,6 +122,12 @@ impl Client {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("x-api-key", self.api_key.expose_secret().parse().unwrap());
         headers.insert("anthropic-version", self.version.parse().unwrap());
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            concat!("async-anthropic/", env!("CARGO_PKG_VERSION"))
+                .parse()
+                .unwrap(),
+        );
         if let Some(beta_value) = &self.beta {
             headers.insert("anthropic-beta", beta_value.parse().unwrap());
         }

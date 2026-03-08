@@ -5,7 +5,7 @@ use async_anthropic::{
 };
 use async_trait::async_trait;
 use wiremock::{
-    matchers::{method, path},
+    matchers::{header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 
@@ -137,4 +137,36 @@ async fn test_error_handling_unauthorized() {
         "actual: {:?}",
         &result
     );
+}
+
+#[tokio::test]
+async fn test_user_agent_header() {
+    let server = TestSetup::setup().await;
+    let secret_key = "test_secret";
+
+    let expected_user_agent = concat!("async-anthropic/", env!("CARGO_PKG_VERSION"));
+
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("user-agent", expected_user_agent))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(&ListModelsResponse {
+                data: vec![],
+                first_id: None,
+                has_more: false,
+                last_id: None,
+            }),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key(secret_key)
+        .base_url(server.uri())
+        .build()
+        .unwrap();
+
+    let result = client.models().list().await;
+    assert!(result.is_ok());
 }

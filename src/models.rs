@@ -12,7 +12,7 @@ pub struct Models<'c> {
 }
 
 impl Models<'_> {
-    pub fn new(client: &Client) -> Models {
+    pub fn new(client: &Client) -> Models<'_> {
         Models { client }
     }
 
